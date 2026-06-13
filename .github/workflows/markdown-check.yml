@@ -1,0 +1,80 @@
+name: Markdown checks
+
+on:
+  pull_request:
+    paths:
+      - "**/*.md"
+      - ".github/workflows/*.yml"
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  text-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check public documentation standards
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          import sys
+
+          roots = [Path(".")]
+          exts = {".md", ".yml", ".yaml"}
+          findings = []
+
+          dash_chars = {chr(8212), chr(8211)}
+          private_markers = [
+              "".join(["Ya", "sh"]),
+              "".join(["Ze", "ref"]),
+              "/" + "Users" + "/",
+              "C:" + chr(92) + chr(92) + "Users",
+              "kanadhia" + "yash",
+          ]
+          first_person_terms = [
+              chr(73),
+              chr(73) + "'m",
+              chr(73) + "'ve",
+              "w" + "e",
+              "W" + "e're",
+              "W" + "e've",
+              "o" + "ur",
+              "m" + "y",
+              "m" + "ine",
+          ]
+          first_person_pattern = re.compile(
+              r"(^|[^A-Za-z])(" + "|".join(re.escape(x) for x in first_person_terms) + r")([^A-Za-z]|$)",
+              re.IGNORECASE,
+          )
+          secret_pattern = re.compile(
+              r"(api[_-]?key|secret|token|password|passwd|private[_-]?key)\s*[:=]\s*['\"]?[A-Za-z0-9_./+=-]{12,}",
+              re.IGNORECASE,
+          )
+
+          for root in roots:
+              for path in root.rglob("*"):
+                  if not path.is_file() or path.suffix not in exts:
+                      continue
+                  text = path.read_text(encoding="utf-8")
+                  for line_no, line in enumerate(text.splitlines(), start=1):
+                      if any(ch in line for ch in dash_chars):
+                          findings.append((path, line_no, "non-ASCII dash"))
+                      if any(marker in line for marker in private_markers):
+                          findings.append((path, line_no, "private marker"))
+                      if first_person_pattern.search(line):
+                          findings.append((path, line_no, "first-person framing"))
+                      if secret_pattern.search(line):
+                          findings.append((path, line_no, "secret-like assignment"))
+
+          if findings:
+              for path, line_no, label in findings:
+                  print(f"{path}:{line_no}: {label}")
+              sys.exit(1)
+
+          print("Public documentation checks passed.")
